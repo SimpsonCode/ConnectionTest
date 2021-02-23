@@ -1,0 +1,1440 @@
+<html>
+<meta charset="UTF-8">
+
+
+<head>
+<title>The Bounce Application</title>
+
+<script type="application/javascript">
+
+
+// TODO:  Do not let a bank shot be HORIZONTAL
+//
+// TODO:  Bonus Droppies
+// TODO:  Bad Things to mess up Collisions
+// TODO:  LEVELS - if NO SHAPES are left over at the end of the level... START a level on the NEXT PADDLE BOUNCE!
+//
+
+
+// GLOBAL STUFF the 800x600 is referenced differently in the HTML
+// The virtual realm
+var WORLD_WIDTH = 120*2;
+var WORLD_HEIGHT = 90*2;
+var HALF_WORLD_WIDTH = WORLD_WIDTH / 2 ;
+var HALF_WORLD_HEIGHT = WORLD_HEIGHT / 2;
+// the physical display
+var SCREEN_WIDTH = 800;
+var SCREEN_HEIGHT = 600;
+var HALF_SCREEN_WIDTH = SCREEN_WIDTH/2;
+var HALF_SCREEN_HEIGHT = SCREEN_HEIGHT/2;
+// Debug Stuff
+var aSHOWDEBUG=false;
+var aDEBUGSTRING="";
+var aDEBUGSTRING2="";
+var aFrame = 0;
+var slamCount = 0;
+
+// Actual Engine Stuff
+var gBallList = []; // could be more than one eh
+var gPaddle = null;
+
+// make a list of registered lines - or segments this level?
+var lineList = [];
+var superLineList = [];
+var shapeList = [];
+var gSpot = {}; // some global spot
+
+// FUNCTIONS BABY!
+
+// the WORLD is 90x120 in this scale
+function mapY(aWorldY)
+{
+   return (HALF_SCREEN_HEIGHT - (aWorldY / (WORLD_HEIGHT / SCREEN_HEIGHT)));
+}
+
+function mapX(aWorldX)
+{
+   return (HALF_SCREEN_WIDTH + (aWorldX / (WORLD_WIDTH / SCREEN_WIDTH)));
+}
+
+
+// THESE CONSIDER the ENTIRE PAGE ... so
+
+// the WORLD is 90x120 in this scale
+function unMapY(aScreenY)
+{
+   return (-(aScreenY - HALF_SCREEN_HEIGHT)) * (WORLD_HEIGHT / SCREEN_HEIGHT);
+}
+
+function unMapX(aScreenX)
+{
+   return (aScreenX-HALF_SCREEN_WIDTH) * (WORLD_WIDTH / SCREEN_WIDTH);
+}
+
+// only call this after something happened in the map like a block hit
+function fillSuperLineList()
+{
+   // take all lines and all shapes and fill one global list
+   // EMPTY current LIST
+   superLineList.splice( 0, superLineList.length );
+
+   // this is start the copy I want
+   superLineList = lineList.slice(0);
+
+   // push.apply is sweet - add all the SHAPE lines
+   for (var sh = 0; sh<shapeList.length;sh++)
+   {
+      var gShape = shapeList[sh];
+
+      // this does the same as below
+      superLineList.push.apply(superLineList, gShape.shapeLines);
+
+	  // does the same as above
+      //for ( var dsl = 0;dsl<gShape.shapeLines.length;dsl++)
+      //{
+      //   var gShapeLine = gShape.shapeLines[dsl];
+      //   superLineList.push(gShapeLine);
+      //}
+
+   } // end of shape list
+
+}
+
+
+
+
+
+// Nothing logical here
+function doMainLoop()
+{
+   // make an error here REMEMBER to VIEW JS ... ERRORS
+	//mainlooperror
+
+   //ivLOOPS ++;
+   //document.title = "LOOP COUNT = " + ivLOOPS;
+   document.title = "LOOP COUNT ! ";
+
+   // call some DO LOGIC HERE
+   doPaddleLogic(gPaddle);
+
+   // every turn make a DYNAMIC LINE LIST
+   fillSuperLineList();
+
+
+   // See about Banking All the Shots
+
+   for (var bh = 0; bh<gBallList.length;bh++)
+   {
+      var gBall = gBallList[bh];
+      doNewBallLogic(gBall);
+   }
+
+
+
+   // remove ALL BALLS that are marked as DEAD?
+      // bullets are marked as dead when they hit something
+      // - they dont reflect
+   for (var bz = gBallList.length-1; bz>=0; bz--)
+   {
+      var daBall = gBallList[bz];
+
+      if ( daBall.isDead == true )
+      {
+          // remove it
+          gBallList.splice(bz,1);
+      }
+   }
+
+
+   // Now DRAW all that
+   var canvas = document.getElementById("backBuffer");
+   var frontCanvas = document.getElementById("frontBuffer");
+
+   if (canvas.getContext)
+   {
+      var ctx = canvas.getContext("2d");
+      doDrawPart( ctx );
+   }
+
+   var frontContext = frontCanvas.getContext("2d");
+   frontContext.drawImage( canvas, 0,0,SCREEN_WIDTH,SCREEN_HEIGHT,0,0,SCREEN_WIDTH,SCREEN_HEIGHT);
+
+   // EXTRA SUPER SECRET DEBUG KEYS afterwards
+   if ( keyMap[32] == true)
+   {
+      //  Hot SPACE NOW RESET!
+	   initSession();
+   }
+   // KEYBOARD HANDLER
+   if ( keyMap[66] == true) // the B key
+   {
+      // SLUGS out a set of BALLS - Need a Button Press EVENT for one only
+      var aBall = initBall();
+      aBall.x = gPaddle.xMiddle;
+      aBall.y = -70;
+      aBall.xs = 1;
+      aBall.ys = 1;
+      gBallList.push( aBall );
+   }
+   // (ZERO is 48)
+   // TEST out PADDLE SIZE
+   if ( keyMap[49] == true) // the 1 key  - The SMALL
+   {
+      gPaddle.xWidth = 24;
+   }
+   if ( keyMap[50] == true) // the 2 key - The REGULAR
+   {
+      gPaddle.xWidth = 32;
+   }
+   if ( keyMap[51] == true) // the 3 key - The LONG
+   {
+      gPaddle.xWidth = 40;
+   }
+   if ( keyMap[61] == true) // the EQUAL = key
+   {
+      aSHOWDEBUG = !aSHOWDEBUG;
+   }
+   if ( keyMap[90] == true || keyMap[122] == true ) // the Z key UPPERCASE
+   {
+      // shoot... STALL the SHOT for a WHILE
+      shootSomething();
+   }
+}
+
+function doDrawPart( ctx )
+{
+   ctx.fillStyle = "rgb(48,0,48)";
+   ctx.fillRect (0, 0, SCREEN_WIDTH,SCREEN_HEIGHT);
+
+   // this is the start of the logic...
+   aFrame = aFrame + 1;
+
+   // for later investigations
+   if (aSHOWDEBUG==true)
+   {
+      ctx.fillStyle = "blue";
+      ctx.font = "20pt Helvetica";
+      ctx.fillText("FRAME COUNT: " + aFrame,  10, 22);
+	  ctx.fillText("COL1: " + aDEBUGSTRING,  10, 52);
+
+      ctx.fillText("FRAME COUNT: " + aFrame,  10, 22);
+	  ctx.fillText("COL: " + aDEBUGSTRING2,  10, 72);
+
+      //var aVelocity = vecLength(gBall.xs, gBall.ys);
+      //ctx.fillText("VEL: " + aVelocity,  10, 92);
+
+      ctx.fillText("SLAM: " + slamCount,  10, 112);
+   }
+
+/*
+   // these are jammed into the SUPERLINE
+   for ( var wl = 0;wl<lineList.length;wl++)
+   {
+      var gLine = lineList[wl];
+      drawLine(ctx, gLine);
+   }
+
+   for ( var ws = 0;ws<shapeList.length;ws++)
+   {
+      var gShape = shapeList[ws];
+      //drawShape(ctx, gShape);
+
+      // this is not good?
+      for ( var dsl = 0;dsl<gShape.shapeLines.length;dsl++)
+      {
+         var gShapeLine = gShape.shapeLines[dsl];
+         drawLine(ctx, gShapeLine);
+      }
+
+   }
+*/
+   for ( var wl = 0;wl<superLineList.length;wl++)
+   {
+      var gLine = superLineList[wl];
+      drawLine(ctx, gLine);
+   }
+
+
+   for (var bh = 0; bh<gBallList.length;bh++)
+   {
+      var gBall = gBallList[bh];
+      drawBall(ctx, gBall);
+   }
+
+/*
+   // leave the tracer behind the ball - so MINUS
+   var aTracer = initLine( );
+   aTracer.x0 = gBall.x;
+   aTracer.y0 = gBall.y;
+   // don't make the tail too big
+   aTracer.x1 = gBall.x - (gBall.xs*2);
+   aTracer.y1 = gBall.y - (gBall.ys*2);
+   drawLine(ctx, aTracer);
+*/
+
+   // better than the tracer?
+   drawDemoPoints(ctx);
+
+   // now just draw the paddle
+   drawPaddle(ctx, gPaddle);
+
+}
+
+// something BASIC here
+function drawPaddle(ctx, zPaddle)
+{
+   var mx0 = mapX(zPaddle.xMiddle - (zPaddle.xWidth/2));
+   var my0 = mapY(zPaddle.yTop)+2;
+   var mx1 = mapX(zPaddle.xMiddle + (zPaddle.xWidth/2));
+   var my1 = mapY(zPaddle.yTop)+2;
+
+/*
+   var mx0 = mapX(aaP.x0);
+   var my0 = mapY(aaP.y0);
+   var mx1 = mapX(aaP.x1);
+   var my1 = mapY(aaP.y1);
+*/
+
+   ctx.fillStyle = "rgb(255,148,255)";
+   ctx.strokeStyle = '#994422';
+   ctx.beginPath();
+   ctx.moveTo(mx0,my0);
+   ctx.lineTo(mx1,my1);
+   ctx.lineWidth = 5;
+   ctx.stroke();
+   ctx.closePath();
+}
+
+// http://stackoverflow.com/questions/573084/how-to-calculate-bounce-angle
+// http://stackoverflow.com/questions/10048840/bouncing-a-ball-off-a-wall-with-arbitrary-angle?lq=1
+// http://stackoverflow.com/questions/345838/ball-to-ball-collision-detection-and-handling?rq=1
+
+
+// modified this one
+//http://stackoverflow.com/questions/563198/how-do-you-detect-where-two-line-segments-intersect
+function lineIntersection(aLine1, aLine2, aSpot)
+{
+    // s for segments
+    var s1_x = aLine1.x1 - aLine1.x0;
+    var s1_y = aLine1.y1 - aLine1.y0;
+
+    var s2_x = aLine2.x1 - aLine2.x0;
+    var s2_y = aLine2.y1 - aLine2.y0;
+
+    // these were my u and v parametric parameters
+    var s = (-s1_y * (aLine1.x0 - aLine2.x0) + s1_x * (aLine1.y0 - aLine2.y0)) / (-s2_x * s1_y + s1_x * s2_y);
+    var t = ( s2_x * (aLine1.y0 - aLine2.y0) - s2_y * (aLine1.x0 - aLine2.x0)) / (-s2_x * s1_y + s1_x * s2_y);
+
+    //??? don't include ZERO - because you get sticky balls - or balls that go through
+    //if (s >= 0 && s <= 1 && t >= 0 && t <= 1)
+
+    if (s > 0 && s <= 1 && t > 0 && t <= 1)
+    {
+        // Collision detected - record the point
+		aSpot.x = aLine1.x0 + (t * s1_x);
+        aSpot.y = aLine1.y0 + (t * s1_y);
+        return true;
+    }
+
+    // No collision
+    return false;
+}
+
+// debug for the PADDLE
+function padIntersection(aLine1, aLine2, aSpot)
+{
+    // s for segments
+    var s1_x = aLine1.x1 - aLine1.x0;
+    var s1_y = aLine1.y1 - aLine1.y0;
+
+    var s2_x = aLine2.x1 - aLine2.x0;
+    var s2_y = aLine2.y1 - aLine2.y0;
+
+    // these were my u and v parametric parameters
+    var s = (-s1_y * (aLine1.x0 - aLine2.x0) + s1_x * (aLine1.y0 - aLine2.y0)) / (-s2_x * s1_y + s1_x * s2_y);
+    var t = ( s2_x * (aLine1.y0 - aLine2.y0) - s2_y * (aLine1.x0 - aLine2.x0)) / (-s2_x * s1_y + s1_x * s2_y);
+
+    //??? don't include ZERO - because you get sticky balls - or balls that go through
+    //if (s >= -0.0001 && s <=1 && t >= 0.0001 && t <= 1)
+
+
+
+
+    if (s >= -0.12 && s <= 1 && t >= -0.12 && t <= 1)
+    {
+        // Collision detected - record the point
+		aSpot.x = aLine1.x0 + (t * s1_x);
+        aSpot.y = aLine1.y0 + (t * s1_y);
+        return true;
+    }
+
+    // No collision
+    return false;
+}
+
+function unitDotProduct( aUnit1, aUnit2 )
+{
+   return (aUnit1.x * aUnit2.x) + (aUnit1.y * aUnit2.y);
+}
+
+function drawShape(ctx, dShape)
+{
+   var aShape = dShape;
+   var aLineCount = aShape.shapeLines.length;
+
+   for ( var dsl = 0;dsl<aLineCount;dsl++)
+   {
+      var gLine = aShape.shapeLines[dsl];
+      drawLine(ctx, gLine );
+   }
+
+}
+
+// also draw the debug for NORMALS - PERPENDICULAR
+function drawLine(ctx, dLine)
+{
+   var mx0 = mapX(dLine.x0);
+   var my0 = mapY(dLine.y0);
+   var mx1 = mapX(dLine.x1);
+   var my1 = mapY(dLine.y1);
+
+   // ctx.drawLine (mx0,my0,mx1,my1);
+
+   if (dLine.shapeOwner == null)
+   {
+     ctx.fillStyle = "rgb(255,148,255)";
+     ctx.strokeStyle = '#33AA33' ;// '#33AA33';
+     ctx.lineWidth = 5;
+   }
+   else
+   {
+     //ctx.fillStyle = "rgb(255,255,255)";
+     ctx.strokeStyle = '#AAAAAA' ;// '#33AA33';
+     // if the SHAPE OWNER has a color use it
+     ctx.lineWidth = 3;
+   }
+
+   ctx.beginPath();
+   ctx.moveTo(mx0,my0);
+   ctx.lineTo(mx1,my1);
+
+   ctx.stroke();
+   ctx.closePath();
+
+   if (aSHOWDEBUG == true)
+   {
+      // half way point
+      var hx = mapX(dLine.hx);
+      var hy = mapY(dLine.hy);
+
+      // half way point + normal - make normals SMALL
+      var hxn = mapX(dLine.hx + (dLine.nx*1) );
+      var hyn = mapY(dLine.hy + (dLine.ny*1) );
+
+      ctx.fillStyle = "rgb(255,255,255)";
+      ctx.strokeStyle = '#AAAAAA';
+      ctx.beginPath();
+      ctx.moveTo(hx,hy);
+      ctx.lineTo(hxn,hyn);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.closePath();
+   }
+
+
+}
+
+// just parms - don't care about lines here
+function vectorAngle(x0,y0,x1,y1)
+{
+    // return Math.atan2(y1-y0, x1-x0);
+    return Math.atan2(x1-x0, y0-y1);
+}
+
+function secondVectorAngle(x,y)
+{
+	return Math.atan2(x,y);
+}
+
+
+
+// Convert Degrees into Radians
+// Radians = Degrees * PI / 180
+//
+// Convert Radians into Degrees
+// Degrees = Radians * 180 / PI
+
+// http://stackoverflow.com/questions/16716244/calculating-angle-between-two-vectors
+// angle = atan2(x, -y) * 180.0/M_PI;
+
+
+/*
+
+float SignedAngleBetween(Vector3 a, Vector3 b, Vector3 n){
+    // angle in [0,180]
+    float angle = Vector3.Angle(a,b);
+    float sign = Mathf.Sign(Vector3.Dot(n,Vector3.Cross(a,b)));
+
+    // angle in [-179,180]
+    float signed_angle = angle * sign;
+
+    // angle in [0,360]
+    float angle360 =  ((signed_angle) + 360) % 360;
+
+    return angle360;
+}
+
+*/
+
+
+// http://stackoverflow.com/questions/570739/how-do-you-calculate-the-angle-of-incidence
+// The dot product of the surface normal vector and the incident light vector will give you the cosine of the angle of incidence, if you've normalised your vectors.
+
+function drawBall(ctx, dBall)
+{
+   var mx = mapX(dBall.x);
+   var my = mapY(dBall.y);
+   // the DOT about this shape rotates
+   if (dBall.isBullet)
+   {
+     ctx.fillStyle = "rgb(228,228, 148)";
+     ctx.fillRect (mx-3,my-3, 7,7);
+   }
+   else
+   {
+     ctx.fillStyle = "rgb(148,148,48)";
+     ctx.fillRect (mx-4,my-4, 9,9);
+   }
+
+   if (aSHOWDEBUG==true)
+   {
+      var aTracer = initLine( );
+      aTracer.x0 = dBall.x;
+      aTracer.y0 = dBall.y;
+      // don't make the tail too big
+      aTracer.x1 = dBall.x - (dBall.xs*2);
+      aTracer.y1 = dBall.y - (dBall.ys*2);
+      drawLine(ctx, aTracer);
+   }
+}
+
+// This can be done way more elegantly - but this is my KEYBOARD controls
+// STARTOF: Keyboard Controls
+var keyMap = [];
+function myDown(e)
+{
+  var keyCode = e.keyCode;
+  keyMap[keyCode] = true;
+}
+
+function myUp(e)
+{
+  var keyCode = e.keyCode;
+  keyMap[keyCode] = false;
+}
+// ENDOF: Keyboard Controls
+
+
+var fromX = 0;
+var fromY = 0;
+
+var tempX = 0;
+var tempY = 0;
+
+// drag and drop a new trajectory
+function myMouseDown(e)
+{
+   fromX = unMapX(tempX);
+   fromY = unMapY(tempY);
+}
+
+// this is the SHOOT a BULLET THING...
+function myMouseUp(e)
+{
+   // right or middle
+   if (e.which != 1)
+   {
+   var toX = unMapX(tempX);
+   var toY = unMapY(tempY);
+
+   // just get the first ball
+   var gBall = gBallList[0];
+   gBall.x = fromX;
+   gBall.y = fromY;
+
+   // MAX MOUSE SPEED HERE or WHAT?
+   gBall.xs = toX - fromX;
+   gBall.ys = toY - fromY;
+   }
+   else
+   {
+      // shoot a bullet (if ENABLED)
+	  shootSomething();
+
+   }
+
+}
+
+function shootSomething()
+{
+      // shoot... STALL the SHOT for a WHILE
+      var aBall = initBall();
+      aBall.x = gPaddle.xMiddle;
+      aBall.y = gPaddle.yTop+1;
+      aBall.xs = 0;
+      aBall.ys = 1.5;
+      aBall.isBullet = true;
+      gBallList.push( aBall );
+}
+
+
+// may need to do more
+function myMouseMove( e )
+{
+    // this captures the mouse...
+    tempX = e.pageX - this.offsetLeft,
+    tempY = e.pageY - this.offsetTop
+
+    // this proves that the mouse is captured and unmap is good
+    // GREAT DEBUG TOOL
+    // pushDemoPoint( unMapX(tempX), unMapY(tempY));
+}
+
+function shapeGotHit( aShape )
+{
+   // remove it from array
+   for (var i=shapeList.length-1;i>=0;i--)
+   {
+        if (aShape == shapeList[i])
+	    {
+           shapeList.splice(i,1);
+           // get out
+           break;
+        }
+   }
+
+    // do this after every MAP alteration - breaking a brick
+   fillSuperLineList();
+
+}
+
+function makeTriUp(atX, atY)
+{
+    var aShape = {  };
+    aShape.shapeLines = new Array( );
+	aShape.aX = atX;
+    aShape.aY = atY;
+
+    //
+    //    /\
+    //   /__\
+    //   1  1
+    //    2
+    var hw = 1 * 8; // half width
+    var hh = Math.sqrt(3) / 2 * 8 ; // half height
+
+    aShape.shapeLines.push( makeLine(  atX   , atY+hh, atX+hw, atY-hh, aShape ) );
+    aShape.shapeLines.push( makeLine(  atX+hw, atY-hh, atX-hw, atY-hh, aShape) );
+    aShape.shapeLines.push( makeLine(  atX-hw, atY-hh, atX   , atY+hh, aShape) );
+
+
+    return aShape;
+}
+
+function makeTriDown(atX, atY)
+{
+    var aShape = {  };
+    aShape.shapeLines = new Array( );
+	aShape.aX = atX;
+    aShape.aY = atY;
+
+    //   ____
+    //   \  /
+    //    \/
+
+    var hw = 1 * 8; // half width
+    var hh = Math.sqrt(3) / 2 * 8 ; // half height
+
+    aShape.shapeLines.push( makeLine(  atX   , atY-hh, atX+hw, atY+hh, aShape ) );
+    aShape.shapeLines.push( makeLine(  atX+hw, atY+hh, atX-hw, atY+hh, aShape) );
+    aShape.shapeLines.push( makeLine(  atX-hw, atY+hh, atX   , atY-hh, aShape) );
+
+
+    return aShape;
+}
+
+function makeHex(atX, atY, aScale)
+{
+    var aShape = {  };
+    aShape.shapeLines = new Array( );
+	aShape.aX = atX;
+    aShape.aY = atY;
+
+    //     _
+    //    / \
+    //    \_/
+
+    var aONE = 1 * aScale;
+    var aTWO = 2 * aScale;
+    var aRTT = Math.sqrt(3) * aScale; // RooT Three
+
+    aShape.shapeLines.push( makeLine(  atX-aONE , atY+aRTT , atX+aONE  , atY+aRTT  , aShape ) );
+    aShape.shapeLines.push( makeLine(  atX+aONE , atY+aRTT , atX+aTWO  , atY       , aShape ) );
+    aShape.shapeLines.push( makeLine(  atX+aTWO , atY      , atX+aONE  , atY-aRTT  , aShape ) );
+    aShape.shapeLines.push( makeLine(  atX+aONE  , atY-aRTT, atX-aONE  , atY-aRTT  , aShape ) );
+    aShape.shapeLines.push( makeLine(  atX-aONE  , atY-aRTT, atX-aTWO  , atY       , aShape ) );
+    aShape.shapeLines.push( makeLine(  atX-aTWO  , atY     , atX-aONE  , atY+aRTT  , aShape ) );
+
+
+    return aShape;
+}
+
+
+// generate a regular brick
+function makeShape(atX, atY)
+{
+    var aShape = {  };
+    aShape.shapeLines = new Array( );
+	aShape.aX = atX;
+    aShape.aY = atY;
+
+    // make a RECTANGLE that is 16x8 in world coordinates...
+    // for now - this is arbitrary later on - want some TRIANGLES... and HEXAGONS
+    var hw = 8; // half width
+    var hh = 4; // half height
+    aShape.shapeLines.push( makeLine( atX-hw, atY+hh, atX+hw,atY+hh , aShape) ); // top
+    aShape.shapeLines.push( makeLine( atX-hw, atY-hh, atX-hw,atY+hh , aShape) ); // left
+    aShape.shapeLines.push( makeLine( atX+hw, atY-hh, atX-hw,atY-hh , aShape) ); // bottom
+    aShape.shapeLines.push( makeLine( atX+hw, atY+hh, atX+hw,atY-hh , aShape) ); // right
+
+	return aShape;
+}
+
+// sort of a line constructor
+function makeLine( ax0,ay0,ax1,ay1, anOwner )
+{
+   var dynLine = {};
+   dynLine.x0 = ax0;
+   dynLine.y0 = ay0;
+   dynLine.x1 = ax1;
+   dynLine.y1 = ay1;
+   dynLine.shapeOwner = anOwner;
+   dynLine.isPad = false;
+
+   // set the mid point and calc the normal
+   compileLine(dynLine);
+   return dynLine;
+}
+
+function initLine( )
+{
+   var aLine = {};
+   // this is exactly a 45' normal
+
+
+   // both of these work
+
+      // ANGLED
+   aLine.x0 = -120.0;
+   aLine.y0 = 0.0;
+   aLine.x1 = .0;
+   aLine.y1 = -120.0;
+
+   // the HORIZONTAL
+   aLine.x0 = -120.0;
+   aLine.y0 = -70.0;
+   aLine.x1 = .0;
+   aLine.y1 = -70.0;
+
+	// something else
+   aLine.x0 = -120.0;
+   aLine.y0 = 0.0;
+   aLine.x1 = .0;
+   aLine.y1 = -35.0;
+
+   aLine.isPad = false;
+
+   return aLine;
+}
+
+// after things are set on the line
+function compileLine(aSingleLine)
+{
+   // this is the half way point
+   aSingleLine.hx = (aSingleLine.x0 + aSingleLine.x1) / 2;
+   aSingleLine.hy = (aSingleLine.y0 + aSingleLine.y1) / 2;
+
+   // this is the unit normal
+   // http://stackoverflow.com/questions/1243614/how-do-i-calculate-the-normal-vector-of-a-line-segment?lq=1
+   // if we define dx=x2-x1 and dy=y2-y1, then the normals are (-dy, dx)FIRST and (dy, -dx)SECOND.
+
+   // we would only divide if detecting perpendicular
+   aSingleLine.nx = -(aSingleLine.y1 - aSingleLine.y0); // -(dy)
+   aSingleLine.ny =  (aSingleLine.x1 - aSingleLine.x0); // (dx)
+
+   // make the normal a UNIT - because that's got good information
+   var aDistance = vecLength(aSingleLine.nx,aSingleLine.ny);
+   // assert that aDistance does not equal ZERO
+   aSingleLine.nx = aSingleLine.nx / aDistance;
+   aSingleLine.ny = aSingleLine.ny / aDistance;
+
+   // could calculate direction and or length as well
+}
+
+// just calculate the distance from here to the origin
+function vecLength( aaX, aaY )
+{
+   var ex2 = 0;
+   var ey2 = 0;
+
+   // what happened here
+   ex2 = aaX * aaX;
+   ey2 = aaY * aaY;
+   var aDistance = Math.sqrt(ex2+ey2);
+   return aDistance;
+}
+
+
+function enforceAngle( aNumber )
+{
+/*
+  var aValue = aNumber;
+  if (aValue < 0)
+  {
+     aValue = aValue + (Math.PI * 2);
+  }
+  if (aValue > (Math.PI*2))
+  {
+     aValue = aValue - (Math.PI * 2);
+  }
+
+  return aValue;
+*/
+return aNumber;
+}
+
+// the hell!
+function asDeg( aRadian )
+{
+   // is this mental too... degrees = radians * (180/pi)
+   var aDegrees = aRadian * ( 180 / Math.PI  );
+   return aDegrees;
+}
+
+// the hell!
+function asRad( aDegree )
+{
+   // mental
+   var aRadian = aDegree / ( 180 / Math.PI  );
+   return aRadian;
+}
+
+
+function initPaddle()
+{
+    thePaddle = {};
+
+    // make this thing follow the mouse
+
+    thePaddle.xMiddle = 0;
+    thePaddle.xWidth = 32; // calc MIN and MAX as this changes
+    //thePaddle.yTop = -72;
+    thePaddle.yTop = -63.1;
+
+    return thePaddle;
+}
+
+// normally pass in gBall - but can also do mult after
+function initBall( aBall )
+{
+   // new class
+   var aBall = {};
+
+   // some bonus stuff
+   aBall.isBullet = false;
+   aBall.isDead = false;
+
+   // init all things with real-double numbers
+   aBall.x = -50.0;
+   aBall.y = 0.0;
+
+   // something down left at 225 deg
+   aBall.xs = -1.0;
+   aBall.ys = -1.0;
+
+   // this is straight down
+   aBall.xs = 0.0;
+   aBall.ys = -1.0;
+
+   //aBall.xs = -1.0;
+   //aBall.ys = 0.0;
+
+   // does this matter?
+   aBall.d = 0.0;
+
+   // faster ball - 3sq+4sq =5sq
+   aBall.xs = 3.0;
+   aBall.ys = 4.0;
+
+   // faster ball - 3sq+4sq =5sq
+   aBall.xs = 1.0;
+   aBall.ys = 2.0;
+
+
+   return aBall;
+}
+
+
+// assume we are using the super line list
+// returns null if not found
+// returns nearest if found
+var aPadLine = {};
+function findNearestIntersectingLine(aBallLine, omitAlreadyHit)
+{
+   var aShortest = 9999;
+   var aReturnLine = null;
+   for ( var w = 0;w<superLineList.length;w++)
+   {
+      var gLine = superLineList[w];
+
+      var doInt = lineIntersection(gLine, aBallLine, gSpot)
+      if (doInt == true)
+      {
+          // from VECTOR origin to the COLLISION SPOT
+          var aContactDistance = vecLength(aBallLine.x0 - gSpot.x, aBallLine.y0 - gSpot.y);
+		  if (aContactDistance < aShortest )
+          {
+			  aShortest = aContactDistance;
+		      aReturnLine = gLine;
+		  }
+	  }
+   }
+
+   // Check the PADDLE here
+   aPadLine.x0 = gPaddle.xMiddle - (gPaddle.xWidth / 2);
+   aPadLine.y0 = gPaddle.yTop;
+   aPadLine.x1 = gPaddle.xMiddle + (gPaddle.xWidth / 2);
+   aPadLine.y1 = gPaddle.yTop;
+   aPadLine.isPad = true;
+   aPadLine.shapeOwner = null;
+
+   // Set the NORMAL too so we can get accurate reflections
+   compileLine(aPadLine);
+
+
+   var doPad = lineIntersection(aPadLine, aBallLine, gSpot)
+   if (doPad == true)
+   {
+
+   	   // from VECTOR origin to the COLLISION SPOT
+       var aContactDistance = vecLength(aBallLine.x0 - gSpot.x, aBallLine.y0 - gSpot.y);
+	   if (aContactDistance < aShortest )
+       {
+		  aShortest = aContactDistance;
+		  // make sure to return the PAD line
+		  aReturnLine = aPadLine;
+
+	   }
+   }
+
+   return aReturnLine;
+}
+
+// Second Generation of BALL LOGIC
+function doNewBallLogic( oneBall )
+{
+   var hitSomething = false;
+   var linePreviouslyHit = null;
+
+   // make the first tracer line
+   var aTracer = {};
+   aTracer.x0 = oneBall.x;
+   aTracer.y0 = oneBall.y;
+   aTracer.x1 = oneBall.x + (oneBall.xs);
+   aTracer.y1 = oneBall.y + (oneBall.ys);
+
+
+   var gLine = findNearestIntersectingLine(aTracer, linePreviouslyHit);
+   if (gLine!=null)
+   {
+         var gSpot = {};
+         // refill the line all inefficient like
+         var stillInt = lineIntersection(gLine, aTracer, gSpot)
+
+
+      	 // we have a line to process
+         var aFullVelocity = vecLength(oneBall.xs, oneBall.ys);
+         var unitXS = oneBall.xs / aFullVelocity;
+         var unitYS = oneBall.ys / aFullVelocity;
+
+         // this is how much velocity we used from the start of this frame to the collision point
+         var aUsedVelocity = vecLength(oneBall.x - gSpot.x, oneBall.y- gSpot.y);
+
+         // this is how far we will move after the collison point is hit
+         var aRemainingVelocity = aFullVelocity - aUsedVelocity ;
+
+         // get the angle that is opposite of the trajectory as we compare that to the normal of the line HENCE the -'s
+         var aRevSpeedAngle = secondVectorAngle( -unitYS, -unitXS );
+
+         // this SHOULD resolve to 45 - but it's not
+         var aNormalAngle = secondVectorAngle( gLine.ny, gLine.nx  );
+
+
+	     // this is the angle between the normal and incoming vector
+         // var aDifferenceAngle = vectorAngle( gLine.nx, gLine.ny, unitXS, unitYS );
+
+         var aNotherAngle = aRevSpeedAngle - aNormalAngle ;
+
+
+         // ROTATE the reverse velocity vector to the NORMAL and then PAST the normal the same amount
+         var aNewAngle = aRevSpeedAngle - ( 2 * aNotherAngle );
+
+      	 // caluclate the newest trajectory
+         var nxs = Math.cos(aNewAngle) * aFullVelocity;
+         var nys = Math.sin(aNewAngle) * aFullVelocity;
+
+		 // this is the NEW x SPEED
+		 oneBall.xs = nxs;
+         oneBall.ys = nys;
+
+
+         // Do PAD reflection logic - ANGLE based on where on paddle it's hit
+		 // Does not cosider incoming angle
+         if (gLine.isPad == true)
+		 {
+
+            var aNum = gSpot.x - gLine.x0;
+			var aDen = gLine.x1 - gLine.x0;
+			var aPct = aNum / aDen; // get a number between 0 and 1;
+            // rotate the ball speed this amount
+
+			// 90 is straight up - +/- 90
+			var aPadAngle = asRad( 90 - ((aPct-0.5)*120) ); // was 180, but I want to stop HORIZONTAL BALLS
+			// get a number from -0.5 to 0.5 -> make it go from -80 to +80
+
+            var pxs = Math.cos(aPadAngle) * aFullVelocity;
+            var pys = Math.sin(aPadAngle) * aFullVelocity;
+  			oneBall.xs = pxs;
+            oneBall.ys = pys;
+
+			// this SLAM count is never reached
+ 			slamCount++;
+
+		 }
+		 else // it is false or NULL
+		 {
+		    // sack the shape if this line was owned
+            if (gLine.shapeOwner != null)
+            {
+               shapeGotHit( gLine.shapeOwner );
+            }
+		    else
+			{
+				//aDEBUGSTRING2 = "---1---";
+			}
+
+			// mark the ball for deletion as it was one hit kill...
+            if ( oneBall.isBullet == true )
+            {
+               // will be cleaned up on the end of frame
+               oneBall.isDead = true;
+            }
+         }
+
+		 aDEBUGSTRING = " SAY!: Shapes=" + shapeList.length + "  superlines="+superLineList.length;
+ 	     // PPP pushDemoPoint(oneBall.x, oneBall.y);
+   }
+   else
+   {
+      oneBall.x = oneBall.x + oneBall.xs;
+      oneBall.y = oneBall.y + oneBall.ys;
+
+      // EVERY MOVE we push a poiint
+      // PPP pushDemoPoint(oneBall.x, oneBall.y);
+
+   }
+
+
+}
+
+// this method just does not work? ----- WTH¬
+function doPaddleLogic(zPaddle)
+{
+
+
+   // this is where the mouse is - FOLLOW it
+   zPaddle.xMiddle = unMapX( tempX ) ;
+
+
+   var halfWidth = zPaddle.xWidth / 2;
+
+
+   // limit to the left
+   if ( ( zPaddle.xMiddle-halfWidth) < -100)
+   {
+      zPaddle.xMiddle = -100 + halfWidth;
+   }
+
+   // limit to the right
+   if ( ( zPaddle.xMiddle+halfWidth) > 60)
+   {
+      zPaddle.xMiddle = 60 - halfWidth;
+   }
+
+}
+
+// http://stackoverflow.com/questions/15596217/angle-between-two-vectors
+// This function has been DEPRICATED for the doNewBallLogic
+function doBallLogic( oneBall )
+{
+   // SUPER CHEAP - But IFFFFF! this ever happens, I can detect a logic bug
+
+   // do BALL logic - recurse until run out of speed
+   var aTracer = initLine( );
+   aTracer.x0 = oneBall.x;
+   aTracer.y0 = oneBall.y;
+   aTracer.x1 = oneBall.x + (oneBall.xs);
+   aTracer.y1 = oneBall.y + (oneBall.ys);
+
+
+   var hitSomething = false;
+
+   // For EACH LINE in the UNIVERSE - TODO: Find the one that it hits the first and use that one - recurse until velocity is used up
+
+   // right now it just finds the first thing it hit - might not be "the closest thing" giving wonky collision results
+
+   // SINCE I only do ONE collision at a time ... I can SQUEEK through where the BOUNDRY LINES INTERSECT
+   //                                             because I only consider one collision - must iterate!
+   //
+   //  Bounce may go to x or x which are both wrong - must return on the path it came
+   //      \ |
+   //       \|x
+   //   -----O-----
+   //       x|
+   //
+
+   // this is just lines generated on the background
+   // DIDDO: check with lines generated by shapes - superlines is made
+   for ( var w = 0;w<superLineList.length;w++)
+   {
+      var gLine = superLineList[w];
+
+      var doInt = lineIntersection(gLine, aTracer, gSpot)
+      if (doInt == true)
+      {
+         hitSomething = true;
+
+         // the full speed we are going at if we hit nothing - friction-less
+         var aVelocity = vecLength(oneBall.xs, oneBall.ys);
+
+         var unitXS = oneBall.xs / aVelocity;
+         var unitYS = oneBall.ys / aVelocity;
+
+         // this is how much velocity we used from the start of this frame to the collision point
+         var aUsedVelocity = vecLength(oneBall.x - gSpot.x, oneBall.y- gSpot.y);
+
+         // this is how far we will move after the collison point is hit
+         var aRemainingVelocity = aVelocity - aUsedVelocity ;
+
+         // get the angle that is opposite of the trajectory as we compare that to the normal of the line HENCE the -'s
+         var aRevSpeedAngle = secondVectorAngle( -unitYS, -unitXS );
+
+         // this SHOULD resolve to 45 - but it's not
+         var aNormalAngle = secondVectorAngle( gLine.ny, gLine.nx  );
+
+
+	     // this is the angle between the normal and incoming vector
+         // var aDifferenceAngle = vectorAngle( gLine.nx, gLine.ny, unitXS, unitYS );
+
+         var aNotherAngle = aRevSpeedAngle - aNormalAngle ;
+
+
+         // nother looks GREAT!
+//         aDEBUGSTRING = "LAST ANGLE COLLIDE: NORM-same=" + asDeg(aNormalAngle) + " SPD=" + asDeg(aRevSpeedAngle) + "  " + asDeg( enforceAngle(aNotherAngle) );
+
+         // normal is correct - angle from vector angle is not
+//         aDEBUGSTRING = "  " + asDeg(aNormalAngle) + " " + asDeg(aRevSpeedAngle) + " " + "  DIF=" + asDeg(aNotherAngle) + gLine.nx + " " +  gLine.ny ;
+
+         // ROTATE the reverse velocity vector to the NORMAL and then PAST the normal the same amount
+         var aNewAngle = aRevSpeedAngle - ( 2 * aNotherAngle );
+
+      	 // caluclate the newest trajectory
+         var nxs = Math.cos(aNewAngle) * aVelocity;
+         var nys = Math.sin(aNewAngle) * aVelocity;
+
+//         aDEBUGSTRING = "REM=" + aRemainingVelocity + "  NORM==" + asDeg(aNormalAngle) + " " + asDeg(aRevSpeedAngle) + "  NEW="+asDeg(aNewAngle) + " NX="+nxs + " NY="+nys;
+
+         // something for now -
+         if ( gLine.isPad == true )
+         {
+  	        oneBall.xs = -nxs;
+            oneBall.ys = nys;
+			//
+		    //
+ 			// alter the course of the ball according to the paddle as well...
+            //
+			// gLine.x0 to gLine.x1
+            // gSpot.x
+            var aNum = gSpot.x - gLine.x0;
+			var aDen = gLine.x1 - gLine.x0;
+			var aPct = aNum / aDen; // get a number between 0 and 1;
+            // rotate the ball speed this amount
+
+			// 90 is straight up - +/- 90
+			var aPadAngle = asRad( 90 - ((aPct-0.5)*120) ); // was 180, but I want to stop HORIZONTAL BALLS
+			// get a number from -0.5 to 0.5 -> make it go from -80 to +80
+
+            var pxs = Math.cos(aPadAngle) * aVelocity;
+            var pys = Math.sin(aPadAngle) * aVelocity;
+  			oneBall.xs = pxs;
+            oneBall.ys = pys;
+ 			slamCount++;
+
+
+         }
+         else
+         {
+            // reset the speed
+  	        oneBall.xs = nxs;
+            oneBall.ys = nys;
+         }
+
+         // use the remaining ball speed to get out - from the spot of colission
+
+		// BOUNCED
+         // PPP pushDemoPoint(gSpot.x, gSpot.y);
+
+	     // UNCOMMENT this when I collisions to sort by closest and then MULTI-COLLISIONS
+         // things can STILL SQUEEK THROUGH CORNERS!
+         //oneBall.x = gSpot.x + ( Math.cos( aNewAngle ) ) * aRemainingVelocity;
+         //oneBall.y = gSpot.y + ( Math.sin( aNewAngle ) ) * aRemainingVelocity;
+         //
+		 //
+	     // Spd = 6 line segments
+         //
+		 //   ------O
+		 //      /\ |
+         //     /  \|
+         //        /|
+		 //       / |
+		 //
+		 //
+
+         if (gLine.shapeOwner !=null)
+         {
+            gotHit( gLine.shapeOwner );
+         }
+         // break after finding first one - SUCH bad CODE - must iterateuntil all collisions are resolved
+         break;
+
+      } // end of did Intersect
+
+   } // end of loop of lines
+
+   if ( hitSomething == false )
+   {
+      // just let the particle move
+      oneBall.x = oneBall.x + oneBall.xs;
+      oneBall.y = oneBall.y + oneBall.ys;
+
+      // EVERY MOVE we push a poiint
+      // PPP pushDemoPoint(oneBall.x, oneBall.y);
+   }
+}
+
+// TODO: FUTURE DEBUG ... (MOUSE DOWN to MOUSE UP - draw the trajectory)
+
+// this has an array of MOVEtoLINETO coordinates to show the BOUNCE of the BALL
+// ENSURE that every POINT and ANGLE is accounted for
+var gDemoLine = {};
+
+function pushDemoPoint( xxx,yyy )
+{
+   // if we got one BALL only?
+   if (gDemoLine.aXPointList.length > 100)
+   {
+      // index to remove ... than number of elements to remove
+      gDemoLine.aXPointList.splice(0,1);
+      gDemoLine.aYPointList.splice(0,1);
+   }
+
+   // every turn add a point to the end
+   gDemoLine.aXPointList.push( xxx );
+   gDemoLine.aYPointList.push( yyy );
+
+}
+
+function drawDemoPoints(ctx)
+{
+
+   var t= 33;
+   var aLength = gDemoLine.aXPointList.length;
+   if (aLength>1)
+   {
+      ctx.fillStyle = "rgb(255,148,255)";
+      ctx.strokeStyle = '#33FF33';
+      ctx.beginPath();
+
+      var mx0 = mapX(gDemoLine.aXPointList[0]);
+      var my0 = mapY(gDemoLine.aYPointList[0]);
+
+      ctx.moveTo(mx0,my0);
+
+      for (var i=1;i<aLength;i++)
+      {
+         mx0 = mapX(gDemoLine.aXPointList[i]);
+         my0 = mapY(gDemoLine.aYPointList[i]);
+
+         ctx.lineTo(mx0,my0);
+      }
+
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.closePath();
+   }
+}
+
+
+function initSession()
+{
+
+   gPaddle = initPaddle();
+
+   // don't do this for super multiball
+   gBallList.splice( 0, gBallList.length );
+   // init codes go here
+   var aBall = initBall();
+   aBall.x = 0;
+   aBall.y = -60;
+   aBall.xs = 1;
+   aBall.ys = 1;
+   gBallList.push( aBall );
+
+   /*
+   var aBall2 = initBall();
+   aBall2.x = -20;
+   aBall2.y = -60;
+   aBall2.xs = -1;
+   aBall2.ys = 1.5;
+   gBallList.push( aBall2 );
+   */
+
+   lineList.splice( 0, lineList.length );
+   shapeList.splice( 0, shapeList.length );
+
+   // start it off...
+   gDemoLine.aXPointList = new Array();
+   gDemoLine.aYPointList = new Array();
+   // PPP pushDemoPoint(gBall.x, gBall.y);
+
+   // Make Bounds
+
+
+   // anti-clockwise which ( makes sense ----> / normal is rotated 90)
+   // -100 to 60 are the horizontal BOUNDS
+   lineList.push( makeLine(  60, -80 , 60,  80, null ) ); // making it 160 wide
+   lineList.push( makeLine(  60,  80 ,-100,  80, null ) );
+   lineList.push( makeLine( -100,  80, -100, -80, null ) );
+   lineList.push( makeLine( -100, -80,  60, -80, null ) );
+
+/*
+    for ( var sy =0;sy<6;sy++)
+    {
+    // field of play is 160 wide
+    for ( var sx =0;sx<10;sx++)
+    {
+       var theShape = makeShape(-100+8+(sx*16), (sy*8)+10);
+       shapeList.push(theShape);
+    }
+    }
+*/
+
+/*
+    for ( var sy =0;sy<4;sy++)
+    {
+
+    for ( sx=0;sx<10;sx++)
+    {
+    // var theShape = makeTriUp(-100+8+(sx*16),(sy*Math.sqrt(3)*8)+10);
+    var theShape = makeTriDown(-100+8+(sx*16),(sy*Math.sqrt(3)*8)+10);
+
+    shapeList.push(theShape);
+    }
+
+    }
+*/
+
+    for ( var sy=0;sy<4;sy++)
+    {
+    for ( var sx=0;sx<7;sx++)
+    {
+    	//var theShape = makeHex(-100+8+(sx*16), (sy*Math.sqrt(3)*4)+10,4);
+        var theShape = makeHex(-100+8+(sx*24), (sy*Math.sqrt(3)*8)+10,4);
+	    shapeList.push(theShape);
+    }
+    }
+
+    for ( var sy=0;sy<4;sy++)
+    {
+    for ( var sx=0;sx<6;sx++)
+    {
+        var theShape = makeHex(-100+8+12+(sx*24), 10+(sy*Math.sqrt(3)*8)+(Math.sqrt(3)*4),4);
+	    shapeList.push(theShape);
+    }
+    }
+
+   // do this after every MAP alteration
+   fillSuperLineList();
+
+}
+
+function doStart()
+{
+
+   //var x = pew;
+   console.log('Testing console');
+
+   initSession();
+
+   //Console.log STUFF
+
+   // start a game loop - 60 FPS
+   setInterval( doMainLoop, 1000/60 );
+
+   // listen for key events
+   window.addEventListener('keydown',myDown,true);
+   window.addEventListener('keyup',myUp,true);
+   // debug mouse handler
+   window.addEventListener('mousedown',myMouseDown,true);
+   window.addEventListener('mouseup',myMouseUp,true);
+
+   // try to listen here
+   frontBuffer.addEventListener('mousemove',myMouseMove,true);
+
+   //make an error here
+   // 1404
+}
+
+</script>
+</head>
+
+
+<body onLoad="doStart();" style="width:  100%; height: 100%; margin: 0px;">
+
+HEY 2! do it onLoad
+
+<br /><br /><br />
+<canvas id="backBuffer" width="800" height="600" hidden="true"></canvas>
+
+<center><canvas id="frontBuffer" width="800" height="600"></canvas>
+</center>
+
+HEY!
+<br />
+
+</body>
+
+
+
+
+</html>
